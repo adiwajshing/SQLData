@@ -2,14 +2,31 @@ import XCTest
 @testable import SQLData
 
 final class SQLDataTests: XCTestCase {
+    
+    
     func testExample() {
-        // This is an example of a functional test case.
-        // Use XCTAssert and related functions to verify your tests produce the correct
-        // results.
-        XCTAssertEqual(SQLData().text, "Hello, World!")
+        
+        print(Student.structureDescription().map({$0.query}))
+        var student = Student()
+        student.bestFriend = Student()
+        student.bestFriend?.id = 2
+        
+        print(student.stringDescription(includeReferences: true))
+       /* print(TestData.structureDescription())
+        print(TestData.selectMainTableQuery(where: ""))
+        
+        var testData = TestData()
+        testData[keyPath: \.name] = "hello"
+        print(testData.insertQueries())
+        
+        print(TestData.NumberData.subKeyPaths[0].selectQuery(matching: ["3"]))
+        
+      //  print(testData.address.houseNumber)*/
+        
     }
-
+    
     static var allTests = [
         ("testExample", testExample),
     ]
 }
+

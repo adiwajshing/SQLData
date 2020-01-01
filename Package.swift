@@ -9,7 +9,12 @@ let package = Package(
         // Products define the executables and libraries produced by a package, and make them visible to other packages.
         .library(
             name: "SQLData",
-            targets: ["SQLData"]),
+            targets: ["SQLData"]
+        ),
+        .library(
+            name: "SQLiteDB",
+            targets: ["SQLiteDB"]
+        ),
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
@@ -21,8 +26,14 @@ let package = Package(
         .target(
             name: "SQLData",
             dependencies: []),
+        .target(
+            name: "SQLiteDB",
+            dependencies: ["SQLData"]),
         .testTarget(
             name: "SQLDataTests",
             dependencies: ["SQLData"]),
+        .testTarget(
+            name: "SQLiteDBTests",
+            dependencies: ["SQLiteDB"]),
     ]
 )
