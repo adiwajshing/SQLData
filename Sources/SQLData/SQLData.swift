@@ -35,16 +35,17 @@ public struct SQLData {
         internal init (count: Int) {
             rows = (0..<count).map( { _ in T.init() } )
         }
+        
         public var description: String {
             return "{" + rows.map({ "\($0)" }).joined(separator: ",\n") + "}"
         }
-
     }
     
     public enum Error: Swift.Error {
         case duplicateColumnNames (String, String)
         case dataConversionFailed
         case primaryKeyAbsent
+        case referenceNotFound
         case error (String)
     }
 }

@@ -20,12 +20,11 @@ public extension SQLItemConvertible {
     
     static var primaryKeyPath: SQLData.KeyPathDataColumn? { return nil }
     static var mainKeyPaths: [SQLData.KeyPathDataColumn] {
-        return [ SQLData.KeyPathDataColumn(keyPath: \Self.self, name: "value", flags: []) ]
+        return [ SQLData.KeyPathDataColumn(item: \Self.self, name: "value", flags: []) ]
     }
     static var subKeyPaths: [SQLData.KeyPathArrayColumn] { return [] }
     
     internal static func write<K: SQLDataConvertible>(keyPath: AnyKeyPath, object: inout K, stringValue: String?, column: SQLData.Column) {
-        
         let value = Self.init(sqlValue: stringValue!, type: column.dataType, flags: column.flags)
         if let path = keyPath as? WritableKeyPath<K, Self> {
             object[keyPath: path] = value!
@@ -33,24 +32,25 @@ public extension SQLItemConvertible {
             object[keyPath: path] = value
         }
     }
+    internal static func write<K: SQLDataConvertible>(keyPath: AnyKeyPath, objectFrom: K, objectTo: inout K) {
+        if let path = keyPath as? WritableKeyPath<K, Self> {
+            objectTo[keyPath: path] = objectFrom[keyPath: path]
+        } else if let path = keyPath as? WritableKeyPath<K, Self?> {
+            objectTo[keyPath: path] = objectFrom[keyPath: path]
+        }
+    }
     func stringValue (for dataType: SQLData.DataType) -> String {
         return "'\(self)'"
     }
 }
 
-extension String: SQLItemConvertible {
+extension String: SQLItemConvertible {    
     
     public static var defaultDataType: SQLData.DataType { return .string }
     
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
-        switch type {
-        case .varString, .varChar, .string:
-            self.init()
-            self.append(contentsOf: sqlValue)
-            break
-        default:
-            return nil
-        }
+        self.init()
+        self.append(contentsOf: sqlValue)
     }
 }
 extension Date: SQLItemConvertible {
@@ -108,7 +108,7 @@ extension Date: SQLItemConvertible {
 }
 extension Data: SQLItemConvertible {
     
-    public static var defaultDataType: SQLData.DataType { return .blob }
+    public static var defaultDataType: SQLData.DataType { return .mediumBlob }
     
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init( sqlValue.utf8 )
@@ -151,6 +151,14 @@ extension UInt8: SQLItemConvertible {
     }
 }
 extension Int64: SQLItemConvertible {
+    
+    public static var defaultDataType: SQLData.DataType { return .longLong }
+    
+    public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
+        self.init(sqlValue)
+    }
+}
+extension Int: SQLItemConvertible {
     
     public static var defaultDataType: SQLData.DataType { return .longLong }
     

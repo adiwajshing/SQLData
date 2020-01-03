@@ -23,7 +23,7 @@ public extension SQLDataConvertible {
                 if let rowItem = row[i] {
                     var keyPath: AnyKeyPath = item.path.first!.0
                     for (kp, dataType) in item.path.suffix(from: 1) {
-                        keyPath = dataType.appending(subKeyPath: kp, toKeyPath: keyPath, object: &self)!
+                        keyPath = dataType.appending(subKeyPath: kp, toKeyPath: keyPath, object: &self)
                     }
                     let itemType = item.path.last!.1 as! SQLItemConvertible.Type
                     itemType.write(keyPath: keyPath, object: &self, stringValue: rowItem, column: item.column)
@@ -33,17 +33,81 @@ public extension SQLDataConvertible {
             }
         }
     }
-    private static func appending<T: SQLDataConvertible> (subKeyPath: AnyKeyPath, toKeyPath keyPath: AnyKeyPath, object: inout T) -> AnyKeyPath? {
+    internal static func copy <T: SQLDataConvertible>(fromObject: Self, toObject: inout T, keyPath: AnyKeyPath) {
+        
+        let mainKeyPath: WritableKeyPath<T, Self>
+        if let keyPath = keyPath as? WritableKeyPath<T, Self> {
+            mainKeyPath = keyPath
+        } else {
+            let keyPath = keyPath as! WritableKeyPath<T, Optional<Self>>
+            
+            if toObject[keyPath: keyPath] == nil {
+                toObject[keyPath: keyPath] = Self.init()
+            }
+            
+            mainKeyPath = keyPath.appending(path: \Optional<Self>.unsafelyUnwrapped) as! WritableKeyPath<T, Self>
+        }
+        
+        
+        let dataKeyPaths = Self.dataKeyPaths
+        for keyPath in dataKeyPaths {
+            
+            if keyPath.referencing {
+                if let kp = keyPath.dataType.appending(subKeyPath: keyPath.keyPath, toKeyPath: mainKeyPath, objectFrom: fromObject, objectTo: &toObject[keyPath: mainKeyPath]) {
+                    keyPath.dataType.referenceCopy(fromObject: fromObject, uKeyPath: keyPath.keyPath, toObject: &toObject, keyPath: kp)
+                }
+                continue
+            }
+            
+            outer: for item in keyPath.items {
+                
+                var keyPath: AnyKeyPath = item.path.first!.0
+                for (kp, dataType) in item.path.suffix(from: 1) {
+                    if let kp = dataType.appending(subKeyPath: kp, toKeyPath: keyPath, objectFrom: fromObject, objectTo: &toObject[keyPath: mainKeyPath]) {
+                        keyPath = kp
+                    } else {
+                        continue outer
+                    }
+                }
+                
+                let itemType = item.path.last!.1 as! SQLItemConvertible.Type
+                itemType.write(keyPath: keyPath, objectFrom: fromObject, objectTo: &toObject[keyPath: mainKeyPath])
+            }
+        }
+    }
+    internal static func referenceCopy <U: SQLDataConvertible, T: SQLDataConvertible>(fromObject: U, uKeyPath: AnyKeyPath, toObject: inout T, keyPath: AnyKeyPath) {
+        Self.copy(fromObject: Self.getObject(object: fromObject, keyPath: uKeyPath)!, toObject: &toObject, keyPath: keyPath)
+    }
+    private static func appending<T: SQLDataConvertible> (subKeyPath: AnyKeyPath, toKeyPath keyPath: AnyKeyPath, object: inout T) -> AnyKeyPath {
         if let keyPath = keyPath as? WritableKeyPath<T, Self> {
             return (keyPath as AnyKeyPath).appending(path: keyPath)!
-        } else if let keyPath = keyPath as? WritableKeyPath<T, Optional<Self>> {
+        } else {
+            let keyPath = keyPath as! WritableKeyPath<T, Optional<Self>>
+            
             if object[keyPath: keyPath] == nil {
                 object[keyPath: keyPath] = Self.init()
             }
+            
             return (keyPath.appending(path: \Optional<Self>.unsafelyUnwrapped) as AnyKeyPath).appending(path: keyPath)!
+        }
+    }
+    private static func appending<T: SQLDataConvertible>(subKeyPath: AnyKeyPath, toKeyPath keyPath: AnyKeyPath, objectFrom: T, objectTo: inout T) -> AnyKeyPath? {
+        
+        if let keyPath = keyPath as? WritableKeyPath<T, Self> {
+            return (keyPath as AnyKeyPath).appending(path: keyPath)!
         } else {
-            assertionFailure("SHOULD NOT EVER OCCUR")
-            return nil
+            let keyPath = keyPath as! WritableKeyPath<T, Optional<Self>>
+            
+            if objectFrom[keyPath: keyPath] == nil {
+                objectTo[keyPath: keyPath] = nil
+                return nil
+            }
+            
+            if objectTo[keyPath: keyPath] == nil {
+                objectTo[keyPath: keyPath] = Self.init()
+            }
+            
+            return (keyPath.appending(path: \Optional<Self>.unsafelyUnwrapped) as AnyKeyPath).appending(path: keyPath)!
         }
     }
 

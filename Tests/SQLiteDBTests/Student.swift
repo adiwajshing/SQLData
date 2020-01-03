@@ -19,20 +19,20 @@ class Student: SQLDataConvertible {
         
     }
     
-    public static var primaryKeyPath: SQLData.KeyPathDataColumn? {
-        SQLData.KeyPathDataColumn(keyPath: \Student.id, name: "id", flags: [.primaryKey])
-    }
-    public static var mainKeyPaths: [SQLData.KeyPathDataColumn] {
+    public static let primaryKeyPath: SQLData.KeyPathDataColumn? =
+        SQLData.KeyPathDataColumn(item: \Student.id, name: "id", flags: [.primaryKey])
+    
+    public static let mainKeyPaths: [SQLData.KeyPathDataColumn] =
         [
             try! SQLData.KeyPathDataColumn(dataPath: \Student.bestFriend, name: "best_friend", flags: [], referencing: true),
-            SQLData.KeyPathDataColumn(keyPath: \Student.fullName, name: "name", flags: [])
+            SQLData.KeyPathDataColumn(item: \Student.fullName, name: "name", flags: [])
         ]
-    }
-    public static var subKeyPaths: [SQLData.KeyPathArrayColumn] {
+    
+    public static let subKeyPaths: [SQLData.KeyPathArrayColumn] =
         [
             try! SQLData.KeyPathArrayColumn(keyPath: \Student.grades, name: "grades")
         ]
-    }
+    
 }
 extension Student: Equatable {
     static func == (_ lhs: Student, _ rhs: Student) -> Bool {

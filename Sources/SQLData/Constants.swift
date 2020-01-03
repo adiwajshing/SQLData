@@ -55,35 +55,36 @@ extension SQLData {
         }
     }
     
-    public enum DataType: UInt8 {
-        case unknown = 0xaa //unknown type
-        case decimal = 0x00
-        case tinyInt = 0x01  // int8, uint8, bool
-        case short = 0x02 // int16, uint16
-        case long = 0x03 // int32, uint32
-        case float = 0x04 // float32
-        case double = 0x05 // float64
-        case null = 0x06
-        case timestamp = 0x07
-        case longLong = 0x08 // int64, uint64
-        case int24 = 0x09
-        case date = 0x0a
-        case time = 0x0b
-        case dateTime = 0x0c
-        case year = 0x0d
-        case newDate = 0x0e
-        case varChar = 0x0f
-        case bit = 0x10
-        case newDecimal = 0xf6
-        case enumeration = 0xf7
-        case set = 0xf8
-        case tinyBlob = 0xf9
-        case mediumBlob = 0xfa
-        case longBlob = 0xfb
-        case blob = 0xfc
-        case varString = 0xfd
-        case string = 0xfe
-        case geometry = 0xff
+    public enum DataType: Hashable {
+        case unknown //unknown type
+        case decimal
+        case tinyInt  // int8, uint8, bool
+        case short // int16, uint16
+        case long // int32, uint32
+        case float // float32
+        case double // float64
+        case null
+        case timestamp
+        case longLong // int64, uint64
+        case int24
+        case date
+        case time
+        case dateTime
+        case year
+        case newDate
+        case varChar (Int)
+        case bit
+        case newDecimal
+        case enumeration
+        case set
+        case tinyBlob
+        case mediumBlob
+        case longBlob
+        case blob(Int)
+        case varString
+        case string
+        case geometry
+        case char(Int)
         
         public var description: String {
             return "\(self)".uppercased()

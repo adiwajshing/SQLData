@@ -13,7 +13,7 @@ public extension SQLDataConvertible {
         return String(describing: Self.self)
     }
     
-    static var dataKeyPaths: [SQLData.KeyPathDataColumn] {
+    internal static var dataKeyPaths: [SQLData.KeyPathDataColumn] {
         var keypaths = mainKeyPaths
         if let pK = primaryKeyPath {
             keypaths.insert(pK, at: 0)

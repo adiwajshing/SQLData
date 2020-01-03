@@ -17,7 +17,7 @@ public extension SQLData {
         public let referencing: Bool
         public let items: [KeyPathItemColumn]
 
-        public init<K: SQLDataConvertible, V: SQLItemConvertible>(keyPath: WritableKeyPath<K, V>, name: String, dataType: DataType? = nil, flags: FieldFlag) {
+        public init<K: SQLDataConvertible, V: SQLItemConvertible>(item keyPath: WritableKeyPath<K, V>, name: String, dataType: DataType? = nil, flags: FieldFlag) {
             self.keyPath = keyPath
             self.dataType = V.self
             self.flags = flags.union(.notNull)
@@ -30,7 +30,25 @@ public extension SQLData {
             
             self.referencing = false
         }
-        public init<K: SQLDataConvertible, V: SQLItemConvertible>(keyPath: WritableKeyPath<K, V?>, name: String, dataType: DataType? = nil, flags: FieldFlag) {
+        public init<K: SQLDataConvertible, V: SQLItemConvertible>(itemArray keyPath: WritableKeyPath<K, [V]>, names: [String], dataType: DataType? = nil, flags: FieldFlag) {
+            self.keyPath = keyPath
+            self.dataType = V.self
+            self.flags = flags.union(.notNull)
+            
+            self.items = names.indices.map({
+                let newKeyPath = keyPath.appending(path: \[V].[$0])
+                
+                if let dataType = dataType {
+                    return KeyPathItemColumn(keyPath: newKeyPath, column: SQLData.Column(name: names[$0], dataType: dataType, flags: flags))
+                } else {
+                    return KeyPathItemColumn(keyPath: newKeyPath, column: Column(name: names[$0], fromType: V.self, flags: flags))
+                }
+            })
+            
+            self.referencing = false
+        }
+        
+        public init<K: SQLDataConvertible, V: SQLItemConvertible>(item keyPath: WritableKeyPath<K, V?>, name: String, dataType: DataType? = nil, flags: FieldFlag) {
             self.keyPath = keyPath
             self.dataType = V.self
             self.flags = flags.subtracting(.notNull)
@@ -43,19 +61,32 @@ public extension SQLData {
             
             self.referencing = false
         }
+        public init<K: SQLDataConvertible, V: SQLItemConvertible>(itemArray keyPath: WritableKeyPath<K, [V?]>, names: [String], dataType: DataType? = nil, flags: FieldFlag) {
+            self.keyPath = keyPath
+            self.dataType = V.self
+            self.flags = flags.subtracting(.notNull)
+            
+            self.items = names.indices.map({
+                let newKeyPath = keyPath.appending(path: \[V?].[$0])
+                
+                if let dataType = dataType {
+                    return KeyPathItemColumn(keyPath: newKeyPath, column: SQLData.Column(name: names[$0], dataType: dataType, flags: flags))
+                } else {
+                    return KeyPathItemColumn(keyPath: newKeyPath, column: Column(name: names[$0], fromType: V.self, flags: flags))
+                }
+            })
+            
+            self.referencing = false
+        }
         
         fileprivate init<K: SQLDataConvertible, V: SQLDataConvertible>(keyPathNonOp: WritableKeyPath<K, V>?, keyPathOp: WritableKeyPath<K, V?>?, name: String, flags: SQLData.FieldFlag, referencing: Bool) throws {
             
             if V.self is SQLItemConvertible {
-                throw SQLData.Error.error("Use")
+                throw SQLData.Error.error("Use .init(item: ) instead")
             }
             
             if K.self is V && !referencing {
                 throw SQLData.Error.error("Cannot use self as a column, as it will create a loop; set referencing: true to fix")
-            }
-            
-            if referencing && flags.contains(.primaryKey) {
-                throw Error.error("a reference to a data structure cannot be a primary key")
             }
 
             let keyPath = keyPathNonOp ?? keyPathOp!
@@ -65,7 +96,6 @@ public extension SQLData {
             self.flags = flags
             self.referencing = referencing
             
-            var items = [KeyPathItemColumn]()
             
             let dataKeyPaths: [[SQLData.KeyPathItemColumn]]
             if referencing {
@@ -78,19 +108,16 @@ public extension SQLData {
                 dataKeyPaths = V.mainKeyPaths.map({$0.items})
             }
             
-            for kpItems in dataKeyPaths {
-                let it = kpItems.map({ item -> KeyPathItemColumn in
+            self.items = dataKeyPaths.flatMap({ kpItems in
+                return kpItems.map({ item -> KeyPathItemColumn in
                     if let keyPath = keyPathNonOp {
                         return KeyPathItemColumn(prefixing: keyPath, prefixingName: "\(name)_", flags: item.column.flags, toItemColumn: item)
                     } else {
                         return KeyPathItemColumn(prefixing: keyPathOp!, prefixingName: "\(name)_", flags: item.column.flags.subtracting(.notNull), toItemColumn: item)
                     }
                 })
-                items.append(contentsOf: it)
-
-            }
+            })
             
-            self.items = items
         }
         internal init (initalizingForSubKeyPath prefix: String, onto keyPath: KeyPathDataColumn) {
             self.keyPath = keyPath.keyPath
@@ -126,18 +153,15 @@ public extension SQLData.KeyPathDataColumn {
         try self.init(keyPathNonOp: path, keyPathOp: nil, name: name, flags: flags.union(.notNull), referencing: referencing)
     }
     init<K: SQLDataConvertible, V: SQLDataConvertible>(dataPath path: WritableKeyPath<K, V?>, name: String, flags: SQLData.FieldFlag, referencing: Bool = false) throws {
-        
-        if K.self is V && !(V.self is SQLItemConvertible) && !referencing {
-            throw SQLData.Error.error("Cannot use self as a column, as it will create a loop; set referencing: true to fix")
-        }
         try self.init(keyPathNonOp: nil, keyPathOp: path, name: name, flags: flags.subtracting(.notNull), referencing: referencing)
     }
     
 }
+
 public extension SQLData {
     struct KeyPathItemColumn {
         let path: [(AnyKeyPath, SQLDataConvertible.Type)]
-        let column: Column
+        public let column: Column
         
         init <K: SQLDataConvertible, V: SQLDataConvertible>(keyPath: WritableKeyPath<K, V>, column: Column) {
             self.path = [(keyPath, V.self)]

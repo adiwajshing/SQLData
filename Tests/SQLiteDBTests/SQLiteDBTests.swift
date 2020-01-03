@@ -21,7 +21,6 @@ final class SQLiteDBTests: XCTestCase {
         openDB { (db) in
             Student.initializeStructure(on: db) { (error) in
                 XCTAssertNil(error, "error in structure init: \(error!)")
-                
                 print("structure init success")
                 completion(db)
             }
@@ -50,15 +49,60 @@ final class SQLiteDBTests: XCTestCase {
     func testSelect () {
         
         openDB { (db) in
-            
-            Student.select(where: "", on: db) { (table, error) in
+            Student.select(where: "", on: db, row: { item in
+                print("\(item.id), \(item.fullName)")
+            }) { error in
                 XCTAssertNil(error, "error in selecting data: \(error!)")
-                
-                print(table!.rows.count)
             }
             
         }
         
+    }
+    func testSelectColumn () {
+        
+        openDB { (db) in
+            Student.select(\Student.id, where: "", on: db, row: { id in
+                print("\(id)")
+            }) { error in
+                XCTAssertNil(error, "error in selecting data: \(error!)")
+            }
+            
+        }
+        
+    }
+    func testInheritanceInsertAndSelect () {
+        
+        openDB(completion: { db in
+            Person.initializeStructure(on: db) { (error) in
+                XCTAssertNil(error, "error in init structure: \(error!)")
+                
+                PersonWithHouse.initializeStructure(on: db) { (error) in
+                    XCTAssertNil(error, "error in init structure: \(error!)")
+                    
+                    print("structure init success")
+                    
+                    
+                    print(PersonWithHouse.structureDescription().map({$0.query}))
+                    print(PersonWithHouse.primaryKeyPath!.flags)
+                    
+                    let p = PersonWithHouse()
+                    p.id = 20
+                    p.name = "Jeff"
+                    p.houseNumber = 40
+
+                    p.insert(on: db, includeReferences: true) { error in
+                        XCTAssertNil(error, "error in insert: \(error!)")
+                        
+                        PersonWithHouse.select(where: "", on: db, row: { (person) in
+                            
+                        }) { error in
+                            XCTAssertNil(error, "error in insert: \(error!)")
+                        }
+                    }
+                }
+            }
+        })
+        usleep(1000*1000)
     }
     func testManyInsertAndSelect () {
         let range = 0..<1000
@@ -90,13 +134,16 @@ final class SQLiteDBTests: XCTestCase {
             }
             
             group.notify(queue: db.defaultDispatchQueue) {
-                Student.select(where: " id % 2 == 0 ORDER BY id", on: db) { (table, error) in
+                print("multiple insert success")
+                var i = 0
+                Student.select(where: "id % 2 == 0 ORDER BY id", on: db, row: { item in
+                    XCTAssertEqual(item, data[i])
+                    i += 1
+                }) { error in
                     XCTAssertNil(error, "error in selecting data: \(error!)")
-                    for i in table!.rows.indices {
-                        XCTAssertEqual(table!.rows[i], data[i])
-                    }
-                    print("multiple insert & select success")
+                    print("multiple select success")
                 }
+
             }
             
             

@@ -10,14 +10,13 @@ import Foundation
 import SQLite3
 import SQLData
 
+fileprivate typealias SQLiteCallback = ((Int32, UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?, UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?, Swift.Error?) -> Void)
+
 public class SQLiteDB: SQLConnectable {
     
-    private typealias SQLiteCallback = ((Int32, UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?, UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?) -> Void)
+    public let isConcurrencyCapable = true
+    public let defaultDispatchQueue: DispatchQueue = DispatchQueue(label: "label", attributes: [])
     
-    private static var sqliteCallback: SQLiteCallback?
-    private static let sm = DispatchSemaphore(value: 1)
-    
-    public let defaultDispatchQueue: DispatchQueue = .global()
     public let url: URL
     
     private var db: OpaquePointer!
@@ -27,7 +26,7 @@ public class SQLiteDB: SQLConnectable {
     }
     public func open(_ completion: @escaping (Swift.Error?) -> Void) {
         var db: OpaquePointer?
-        let result = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE|SQLITE_OPEN_FULLMUTEX|SQLITE_OPEN_CREATE, nil)
+        let result = sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_CREATE, nil)
         
         if result == SQLITE_OK {
             print("successfully opened connection to database at \(url.path)")
@@ -43,68 +42,35 @@ public class SQLiteDB: SQLConnectable {
         db = nil
     }
     
-    public func query(_ q: String, completion: @escaping (Swift.Error?) -> Void) {
-        do {
-            try SQLiteDB.query(db: db, q: q, callback: nil)
-            completion(nil)
-        } catch {
-            completion(error)
-        }
-    }
-    public func query(_ q: String, table: @escaping ([String : Int], [[String?]], Swift.Error?) -> Void) {
-        var columns = [String: Int]()
-        var rows = [[String?]]()
+    public func query (_ q: String, row: (([String?]) -> Void)?, completion: @escaping (Swift.Error?) -> Void) {
         
-        do {
-            try SQLiteDB.query(db: db, q: q, callback: { (count, data, columnNames) in
-                
-                if columns.count == 0 {
-                    for i in 0..<Int(count) {
-                        columns[ String(cString: columnNames![i]!) ] = i
-                    }
-                }
-                let row = (0..<Int(count)).map({ i -> String? in
+        var err: UnsafeMutablePointer<Int8>?
+        let r: Int32
+
+        if var rowCallback = row {
+            r = sqlite3_exec(db, q, { keyContext, count, data, columnNames in
+                let callback = keyContext!.assumingMemoryBound(to: (([String?]) -> Void).self).pointee
+                let row = (0..<Int(count)).map { (i) -> String? in
                     if let data = data?[i] {
                         return String(cString: data)
                     }
                     return nil
-                })
+                }
+                callback(row)
                 
-                rows.append(row)
-            })
-            table(columns, rows, nil)
-        } catch {
-            table(columns, rows, error)
+                return 0
+            }, &rowCallback, &err)
+        } else {
+            r = sqlite3_exec(db, q, { _, _, _, _ in return 0 }, nil, &err)
         }
         
-    }
-
-    
-    private static func query (db: OpaquePointer, q: String, callback: SQLiteCallback?) throws {
         
-        sm.wait()
-        
-        defer {
-            sm.signal()
-        }
-        
-        sqliteCallback = callback
-        
-        var err: UnsafeMutablePointer<Int8>?
-        var r: Int32 = 0
-        
-        r = sqlite3_exec(db, q, { notused, count, data, columnNames in
-            SQLiteDB.sqliteCallback?(count, data, columnNames)
-            return 0
-        }, nil, &err)
-        
-        sqliteCallback = nil
-        
-        if r != SQLITE_OK {
+        if r == SQLITE_OK {
+            completion(nil)
+        } else {
             let msg = String(cString: err!)
-            throw Error.errorInQuery(msg)
+            completion(Error.errorInQuery(msg))
         }
-        
     }
     
     public enum Error: Swift.Error {

@@ -5,13 +5,13 @@ final class SQLDataTests: XCTestCase {
     
     
     func testExample() {
-        
-        print(Student.structureDescription().map({$0.query}))
+ 
+       /* print(Student.structureDescription().map({$0.query}))
         var student = Student()
         student.bestFriend = Student()
         student.bestFriend?.id = 2
         
-        print(student.stringDescription(includeReferences: true))
+        print(student.stringDescription(includeReferences: true))*/
        /* print(TestData.structureDescription())
         print(TestData.selectMainTableQuery(where: ""))
         
