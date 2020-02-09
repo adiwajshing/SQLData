@@ -6,211 +6,106 @@
 //
 
 import Foundation
+import Promises
 
 public extension SQLDataConvertible {
     
-    func insert (on connectable: SQLConnectable, includeReferences: Bool, completion: @escaping (Error?) -> Void) {
-        let queries = self.insertQueries(includeReferences: includeReferences)
-        connectable.query(unorderedQueries: queries, completion: completion)
+    func insert (on connectable: SQLConnectable, include: SQLDataIOOptions = []) -> Promise<Void> {
+        let queries = self.insertQueries(include: include)
+        return connectable.query(queries: queries)
     }
     
-    static func columnsToSelect () -> String {
-        return columnsToSelect(keyPaths: dataKeyPaths)
-    }
-    static func columnsToSelect (keyPaths: [SQLData.KeyPathDataColumn]) -> String {
+    func delete (on connectable: SQLConnectable, include: SQLDataIOOptions) -> Promise<Void> {
         
-        return keyPaths.flatMap { keyPath in
-            return keyPath.items.map({ "\(tableName).'\($0.column.name)'" })
-        }.joined(separator: ", ")
-    }
-    
-    static func selectMainTableQuery (where whereClause: String) -> String {
-        return selectMainTableQuery(keyPaths: dataKeyPaths, where: whereClause)
-    }
-    static func selectMainTableQuery (keyPaths: [SQLData.KeyPathDataColumn], where whereClause: String) -> String {
-        return "SELECT \(columnsToSelect(keyPaths: keyPaths)) FROM \(tableName) \(whereClause.isEmpty ? "" : " WHERE \(whereClause)")"
-    }
-    
-    static func initializeStructure (on connectable: SQLConnectable, completion: @escaping (Error?) -> Void) {
-        let queries = structureDescription().map({$0.query})
-        connectable.query(unorderedQueries: queries, completion: completion)
-    }
-    static func select <T: SQLDataConvertible> (_ keyPath: WritableKeyPath<Self, T>, where whereClause: String, on connectable: SQLConnectable, row callback: @escaping (T) -> Void, completion: @escaping (Error?) -> Void) {
+        let tableName = Self.tableName
         
-        if let keyPath = dataKeyPaths.first(where: { $0.keyPath == keyPath }) {
-            T.select(selectMainTableQuery(keyPaths: [keyPath], where: whereClause), on: connectable, row: callback, completion: completion)
+        let matchClauses: [String]
+        if let keyPath = Self.primaryKeyPath {
+            matchClauses = keyPath.items.map({ "\(tableName).'\($0.column.name)'=\(obtainValue(from: $0.path.suffix(from: 0))?.stringValue(for: $0.column.dataType) ?? "NULL")" })
         } else {
-            completion(nil)
+            matchClauses = Self.mainKeyPaths.flatMap({ $0.items.map{ "\(tableName).'\($0.column.name)'=\(obtainValue(from: $0.path.suffix(from: 0))?.stringValue(for: $0.column.dataType) ?? "NULL")" } })
         }
         
+        return connectable.query("DELETE FROM \(tableName) WHERE \(matchClauses.joined(separator: ", "))", row: nil)
+        
     }
-    static func select (where whereClause: String, on connectable: SQLConnectable, row callback: @escaping (Self) -> Void, completion: @escaping (Error?) -> Void ) {
-        select(selectMainTableQuery(where: whereClause), on: connectable, row: callback, completion: completion)
+    func delete <T: SQLDataConvertible> (indexes: [Int], on connectable: SQLConnectable, ofSubKeyPath keyPath: WritableKeyPath<Self, [T]>) -> Promise<Void> {
+        
+        var arr = self[keyPath: keyPath]
+        let removedValues = indexes.map { arr.remove(at: $0) }
+        let path = Self.subKeyPaths.first(where: { keyPath == $0.keyPath })!
+        
+        let queries = removedValues.map({ value -> String in
+            var columns = path.mappingKeyPath.items.map { item -> String in
+                let val = self.obtainValue(from: item.path.suffix(from: 0))?.stringValue(for: item.column.dataType)
+                return "\(item.column.name)=\(val ?? "NULL")"
+            }
+            columns.append(contentsOf: path.dataType.mainKeyPaths.flatMap({ path in
+                path.items.map { item -> String in
+                    let val = value.obtainValue(from: item.path.suffix(from: 0))?.stringValue(for: item.column.dataType)
+                    return "\(item.column.name)=\(val ?? "NULL")"
+                }
+            }))
+            return "DELETE FROM \(path.keyName) WHERE \(columns.joined(separator: " AND "))"
+        })
+        return connectable.query(queries: queries)
     }
-    static func select (_ q: String, on connectable: SQLConnectable, row callback: @escaping (Self) -> Void, completion: @escaping (Error?) -> Void ) {
+    func update (_ keyPaths: PartialKeyPath<Self>..., on connectable: SQLConnectable) -> Promise<Void> {
+        return self.update(keyPaths, on: connectable)
+    }
+    func update (_ keyPaths: [PartialKeyPath<Self>], on connectable: SQLConnectable) -> Promise<Void> {
+        
+        let tableName = Self.tableName
+        let dataPaths = Self.mainKeyPaths
+        
+        let setClauses = keyPaths.flatMap { path -> [String] in
+            let kp = dataPaths.first(where: { $0.keyPath == path })!
+            return kp.items.map({ "\($0.column.name)=\( obtainValue(from: $0.path.suffix(from: 0))?.stringValue(for: $0.column.dataType) ?? "NULL" )" })
+        }
+        let matchClause = Self.primaryKeyPath!.items.map({
+            "\($0.column.name)==\( obtainValue(from: $0.path.suffix(from: 0))?.stringValue(for: $0.column.dataType) ?? "NULL" )"
+        })
+        
+        let q = "UPDATE \(tableName) SET \(setClauses.joined(separator: ", ")) WHERE \(matchClause.joined(separator: ", "))"
 
-        let errorInSubPath = AtomicMutablePointer<Error?>(nil)
-        
-        let dispatchGroup = DispatchGroup()
-        
-        if connectable.isConcurrencyCapable {
-            
-            connectable.query(q, row: { (row) in
-                loadFromRow(row: row, rowGroup: dispatchGroup, connectable: connectable, errorInSubPath: errorInSubPath, row: callback, completion: completion)
-            }) { error in
-                if let error = error {
-                    completion(error)
-                    return
-                }
-                
-                dispatchGroup.notify(queue: connectable.defaultDispatchQueue) { completion(errorInSubPath.syncPointee) }
-            }
-            
-        } else {
-            
-            connectable.query(q) { (table, error) in
-                if let error = error {
-                    completion(error)
-                    return
-                }
-                
-                for i in table.indices {
-                    loadFromRow(row: table[i], rowGroup: dispatchGroup, connectable: connectable, errorInSubPath: errorInSubPath, row: callback, completion: completion)
-                }
-                
-                dispatchGroup.notify(queue: connectable.defaultDispatchQueue) { completion(errorInSubPath.syncPointee) }
-            }
-            
-        }
+        return connectable.query(q, row: nil)
     }
-    fileprivate static func loadFromRow (row: [String?], rowGroup: DispatchGroup, connectable: SQLConnectable, errorInSubPath: AtomicMutablePointer<Error?>, row callback: @escaping (Self) -> Void, completion: @escaping (Error?) -> Void ) {
+    func update <T: SQLDataConvertible> (valueAtIndex index: Int, to newValue: T, atSubKeyPath keyPath: WritableKeyPath<Self, [T]>) -> Promise<Void> {
+        fatalError()
+    }
+    
+    func insert <T: SQLDataConvertible> (appending value: T, toSubKeyPath keyPath: WritableKeyPath<Self, [T]>, on connectable: SQLConnectable, include: SQLDataIOOptions) -> Promise<Void> {
+       // self[keyPath: keyPath].append(value)
         
-        if errorInSubPath.syncPointee != nil {
-            return
-        }
+        let subPath = Self.subKeyPaths.first(where: { $0.keyPath == keyPath })!
+        let desc = subDescriptions(keyPath: subPath, value: value, index: self[keyPath: keyPath].count, include: include)
+        let queries = Self.insertQueries(from: desc)
         
-        rowGroup.enter()
-        
-        var item = Self()
-        item.read(mainRow: row)
-        
-        let subDispatchGroup = DispatchGroup()
-        
-        let completionBlock = { (error: Error?) in
-            subDispatchGroup.leave()
+        return connectable.query(queries: queries)
+    }
+    static func insert (_ data: [Self], on connectable: SQLConnectable, include: SQLDataIOOptions) -> Promise<Void> {
+        return Promise<Void>(on: connectable.defaultDispatchQueue) { fulfill, reject in
+            let group = DispatchGroup()
             
-            if let error = error, errorInSubPath.syncPointee == nil {
-                errorInSubPath.syncPointee = error
-                completion(error)
-            }
-        }
-        
-        var j = 0
-        
-        for keyPath in Self.dataKeyPaths {
-            
-            if !keyPath.referencing && keyPath.dataType.subKeyPaths.count == 0 {
-                j += keyPath.items.count
-                continue
-            }
-            
-            let matchArr = keyPath.dataType.primaryKeyPath!.items.indices.map({ index -> String in
-                return row[ index + j ] ?? "NULL"
-            })
-            
-            if keyPath.referencing {
-                subDispatchGroup.enter()
-                keyPath.dataType.selectReferencedPath(matchClause: matchArr, on: connectable, item: &item, keyPathToItem: keyPath.keyPath, completion: completionBlock)
-            } else if keyPath.dataType.subKeyPaths.count > 0 {
-                subDispatchGroup.enter()
-                keyPath.dataType.selectSubPaths(matchClause: matchArr, on: connectable, item: &item, keyPathToItem: keyPath.keyPath, completion: completionBlock)
-            }
-        }
-        
-        if Self.subKeyPaths.count > 0 {
-            let matchArr = Self.primaryKeyPath!.items.indices.map { return row[ $0 ] ?? "NULL" }
-            
-            subDispatchGroup.enter()
-            selectSubPaths(matchClause: matchArr, on: connectable, item: &item, keyPathToItem: \Self.self, completion: completionBlock)
-        }
-        
-        
-        subDispatchGroup.notify(queue: connectable.defaultDispatchQueue, execute: {
-            if errorInSubPath.syncPointee == nil {
-                item.postProcess (on: connectable) { error in
-                    if errorInSubPath.syncPointee == nil {
-                        errorInSubPath.syncPointee = error
+            var errorInPath: Error?
+            for i in data.indices {
+                group.enter()
+                data[i].insert(on: connectable, include: include)
+                .catch(on: connectable.defaultDispatchQueue) { error in
+                    if errorInPath == nil {
+                        group.leave()
+                        errorInPath = error
+                        reject(error)
                     }
-                    
-                    rowGroup.leave()
-                    callback(item)
                 }
+                .then(on: connectable.defaultDispatchQueue, group.leave)
             }
-            
-        })
-        
+            group.notify(queue: connectable.defaultDispatchQueue) { fulfill(()) }
+        }
     }
-    fileprivate static func selectReferencedPath <K: SQLDataConvertible> (matchClause arr: [String], on connectable: SQLConnectable, item: UnsafeMutablePointer<K>, keyPathToItem: AnyKeyPath, completion: @escaping (Error?) -> Void) {
-        
-        var isPointlessQuery = false
-        
-        let pkPath = primaryKeyPath!
-        let matchClause = pkPath.items.indices.map({ i -> String in
-            if pkPath.items[i].column.flags.contains(.notNull) && arr[i] == "NULL" {
-                isPointlessQuery = true
-            }
-            return "\(tableName).'\(pkPath.items[i].column.name)'=='\(arr[i])'"
-        })
-        
-        if isPointlessQuery {
-            completion(nil)
-            return
-        }
-        
-        var referenceFound = keyPathToItem is WritableKeyPath<K, Self?>
-        select(where: "\(matchClause.joined(separator: ", ")) LIMIT 1", on: connectable, row: { row in
-            referenceFound = true
-            Self.copy(fromObject: row, toObject: &item.pointee, keyPath: keyPathToItem)
-        }) { error in
-            if error == nil, !referenceFound {
-                completion(SQLData.Error.referenceNotFound)
-            } else {
-                completion(error)
-            }
-            
-            
-        }
-        
-    }
-    
-    fileprivate static func selectSubPaths <K: SQLDataConvertible> (matchClause arr: [String], on connectable: SQLConnectable, item: UnsafeMutablePointer<K>, keyPathToItem: AnyKeyPath, completion: @escaping (Error?) -> Void) {
-        
-        var error: Error?
-        let group = DispatchGroup()
-        
-        defer {
-            group.notify(queue: connectable.defaultDispatchQueue, execute: { if error == nil { completion(nil) } })
-        }
-        
-        for subKeyPath in subKeyPaths {
-            group.enter()
-
-            let kp = keyPathToItem.appending(path: subKeyPath.keyPath)!
-            let query = subKeyPath.selectQuery(matching: arr)
-            subKeyPath.dataType.setSubKeyPath(query, on: connectable, keyPath: kp, item: item) { err in
-                if let err = err {
-                    error = err
-                    completion(error)
-                }
-                group.leave()
-            }
-        }
-        
-    }
-    private static func setSubKeyPath <K: SQLDataConvertible> (_ q: String, on connectable: SQLConnectable, keyPath: AnyKeyPath, item: UnsafeMutablePointer<K>, completion: @escaping (Error?) -> Void) {
-        
-        let path = keyPath as! WritableKeyPath<K, [Self]>
-        select(q, on: connectable, row: { row in item.pointee[keyPath: path].append(row) }) { error in completion(error) }
+    static func initializeStructure (on connectable: SQLConnectable) -> Promise<Void> {
+        let queries = structureDescription().map({$0.query})
+        return connectable.query(queries: queries)
     }
     
 }

@@ -38,7 +38,7 @@ extension SQLData {
             if self.contains(.unique) {
                 arr.append("UNIQUE")
             }
-            if self.contains(FieldFlag.autoIncrement) {
+            if self.contains(.autoIncrement) {
                 arr.append("AUTOINCREMENT")
             }
             if self.contains(.notNull) {
@@ -86,9 +86,7 @@ extension SQLData {
         case geometry
         case char(Int)
         
-        public var description: String {
-            return "\(self)".uppercased()
-        }
+        public var description: String { "\(self)".uppercased() }
     }
     
 }

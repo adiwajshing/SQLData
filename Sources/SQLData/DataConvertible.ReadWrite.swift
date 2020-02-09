@@ -9,134 +9,102 @@ import Foundation
 
 public extension SQLDataConvertible {
 
-    internal mutating func read (mainRow row: [String?]) {
+    internal mutating func read (mainRow row: [String?]) -> Bool {
         
         let dataKeyPaths = Self.dataKeyPaths
         
         var i = 0
         for keyPath in dataKeyPaths {
+            
             if keyPath.referencing {
                 i += keyPath.items.count
                 continue
             }
-            for item in keyPath.items {
-                if let rowItem = row[i] {
-                    var keyPath: AnyKeyPath = item.path.first!.0
-                    for (kp, dataType) in item.path.suffix(from: 1) {
-                        keyPath = dataType.appending(subKeyPath: kp, toKeyPath: keyPath, object: &self)
-                    }
-                    let itemType = item.path.last!.1 as! SQLItemConvertible.Type
-                    itemType.write(keyPath: keyPath, object: &self, stringValue: rowItem, column: item.column)
+            
+            if !keyPath.dataType.read(object: &self, row: row[i..<(i+keyPath.items.count)], keyPath: keyPath.keyPath, items: keyPath.items) {
+                return false
+            }
+            i += keyPath.items.count
+        }
+        
+        return true
+    }
+    private static func read <T: SQLDataConvertible> (object: inout T, row: ArraySlice<String?>, keyPath: AnyKeyPath, items: [SQLData.KeyPathItemColumn]) -> Bool {
+        
+        if let K = Self.self as? SQLItemConvertible.Type {
+
+            return K.write(keyPath: keyPath, object: &object, stringValue: row.first!, column: items.first!.column)
+        }
+        
+        var obj = Self.init()
+        
+        if let kp = keyPath as? WritableKeyPath<T, Self> {
+            if obj.read(mainRow: Array(row)) {
+                object[keyPath: kp] = obj
+            } else {
+                return false
+            }
+            
+        } else {
+            let kp = keyPath as! WritableKeyPath<T, Self?>
+            let areAllNull = row.firstIndex(where: { $0 != nil }) == nil
+            if areAllNull {
+                object[keyPath: kp] = nil
+            } else {
+                if obj.read(mainRow: Array(row)) {
+                    object[keyPath: kp] = obj
+                } else {
+                    return false
                 }
                 
-                i += 1
             }
+            
         }
+        return true
     }
-    internal static func copy <T: SQLDataConvertible>(fromObject: Self, toObject: inout T, keyPath: AnyKeyPath) {
-        
-        let mainKeyPath: WritableKeyPath<T, Self>
-        if let keyPath = keyPath as? WritableKeyPath<T, Self> {
-            mainKeyPath = keyPath
-        } else {
-            let keyPath = keyPath as! WritableKeyPath<T, Optional<Self>>
-            
-            if toObject[keyPath: keyPath] == nil {
-                toObject[keyPath: keyPath] = Self.init()
-            }
-            
-            mainKeyPath = keyPath.appending(path: \Optional<Self>.unsafelyUnwrapped) as! WritableKeyPath<T, Self>
-        }
-        
+    internal mutating func copy (fromObject: Self) {
         
         let dataKeyPaths = Self.dataKeyPaths
         for keyPath in dataKeyPaths {
-            
-            if keyPath.referencing {
-                if let kp = keyPath.dataType.appending(subKeyPath: keyPath.keyPath, toKeyPath: mainKeyPath, objectFrom: fromObject, objectTo: &toObject[keyPath: mainKeyPath]) {
-                    keyPath.dataType.referenceCopy(fromObject: fromObject, uKeyPath: keyPath.keyPath, toObject: &toObject, keyPath: kp)
-                }
-                continue
-            }
-            
-            outer: for item in keyPath.items {
-                
-                var keyPath: AnyKeyPath = item.path.first!.0
-                for (kp, dataType) in item.path.suffix(from: 1) {
-                    if let kp = dataType.appending(subKeyPath: kp, toKeyPath: keyPath, objectFrom: fromObject, objectTo: &toObject[keyPath: mainKeyPath]) {
-                        keyPath = kp
-                    } else {
-                        continue outer
-                    }
-                }
-                
-                let itemType = item.path.last!.1 as! SQLItemConvertible.Type
-                itemType.write(keyPath: keyPath, objectFrom: fromObject, objectTo: &toObject[keyPath: mainKeyPath])
-            }
+            keyPath.dataType.copy(from: fromObject, to: &self, keyPath: keyPath.keyPath)
         }
-    }
-    internal static func referenceCopy <U: SQLDataConvertible, T: SQLDataConvertible>(fromObject: U, uKeyPath: AnyKeyPath, toObject: inout T, keyPath: AnyKeyPath) {
-        Self.copy(fromObject: Self.getObject(object: fromObject, keyPath: uKeyPath)!, toObject: &toObject, keyPath: keyPath)
-    }
-    private static func appending<T: SQLDataConvertible> (subKeyPath: AnyKeyPath, toKeyPath keyPath: AnyKeyPath, object: inout T) -> AnyKeyPath {
-        if let keyPath = keyPath as? WritableKeyPath<T, Self> {
-            return (keyPath as AnyKeyPath).appending(path: keyPath)!
-        } else {
-            let keyPath = keyPath as! WritableKeyPath<T, Optional<Self>>
-            
-            if object[keyPath: keyPath] == nil {
-                object[keyPath: keyPath] = Self.init()
-            }
-            
-            return (keyPath.appending(path: \Optional<Self>.unsafelyUnwrapped) as AnyKeyPath).appending(path: keyPath)!
-        }
-    }
-    private static func appending<T: SQLDataConvertible>(subKeyPath: AnyKeyPath, toKeyPath keyPath: AnyKeyPath, objectFrom: T, objectTo: inout T) -> AnyKeyPath? {
         
-        if let keyPath = keyPath as? WritableKeyPath<T, Self> {
-            return (keyPath as AnyKeyPath).appending(path: keyPath)!
-        } else {
-            let keyPath = keyPath as! WritableKeyPath<T, Optional<Self>>
-            
-            if objectFrom[keyPath: keyPath] == nil {
-                objectTo[keyPath: keyPath] = nil
-                return nil
-            }
-            
-            if objectTo[keyPath: keyPath] == nil {
-                objectTo[keyPath: keyPath] = Self.init()
-            }
-            
-            return (keyPath.appending(path: \Optional<Self>.unsafelyUnwrapped) as AnyKeyPath).appending(path: keyPath)!
+        for keyPath in Self.subKeyPaths {
+            keyPath.dataType.copy(from: fromObject, to: &self, keyPath: keyPath.keyPath)
         }
     }
+    private static func copy<T: SQLDataConvertible> (from: T, to: inout T, keyPath: AnyKeyPath) {
+        
+        if let path = keyPath as? WritableKeyPath<T, Self> {
+            
+            if Self.self is SQLItemConvertible.Type {
+                to[keyPath: path] = from[keyPath: path]
+            } else {
+                to[keyPath: path].copy(fromObject: from[keyPath: path])
+            }
 
-    
-    func insertQueries (includeReferences: Bool) -> [String] {
-        
-        var queries = [String]()
-        
-        for (table, rows) in stringDescription(includeReferences: includeReferences) {
-            
-            for row in rows {
-                var columns = [String]()
-                var items = [String]()
-                
-                for (c, i) in row {
-                    columns.append(c)
-                    items.append(i)
-                }
-                queries.append("INSERT INTO '\(table)' ('\(columns.joined(separator: "', '"))') VALUES(\(items.joined(separator: ", ")))")
-                
-            }
-            
-            
+        } else if let path = keyPath as? WritableKeyPath<T, [Self]> {
+            to[keyPath: path] = from[keyPath: path]
+        } else {
+            let path = keyPath as! WritableKeyPath<T, Optional<Self>>
+            to[keyPath: path] = from[keyPath: path]
         }
         
-        return queries
+    }
+    func insertQueries (include: SQLDataIOOptions) -> [String] {
+        return Self.insertQueries(from: stringDescription(include: include))
+    }
+    static func insertQueries (from description: [String: [[String:String]]]) -> [String] {
+        
+        return description.flatMap { (table, rows) in
+            rows.map { row in
+                let keys = row.keys
+                return "INSERT INTO \(table) (\(keys.joined(separator: ", "))) VALUES(\(keys.map{ row[$0]! }.joined(separator: ", ")))"
+            }
+        }
     }
     
-    func stringDescription (includeReferences: Bool) -> [String: [[String: String]]] {
+    func stringDescription (include: SQLDataIOOptions) -> [String: [[String: String]]] {
 
         var values = [String: [[String:String]]]()
         var mainValues = [String: String]()
@@ -150,17 +118,17 @@ public extension SQLDataConvertible {
             
             if let object = keyPath.dataType.getObject(object: self, keyPath: keyPath.keyPath) {
                 
-                if includeReferences, keyPath.referencing {
-                    let desc = object.stringDescription(includeReferences: includeReferences)
+                if include.contains(.referencedValues), keyPath.referencing {
+                    let desc = object.stringDescription(include: include)
                     values.merge(desc, uniquingKeysWith: {s0, s1 in return s0+s1})
-                } else if let value = self[keyPath: keyPath.keyPath] as? SQLDataConvertible, keyPath.dataType.subKeyPaths.count > 0 {
-                    values.merge(value.subDescriptions(includeReferences: includeReferences), uniquingKeysWith: {s0,s1 in return s0+s1 })
+                } else if include.contains(.subValues), let value = self[keyPath: keyPath.keyPath] as? SQLDataConvertible, keyPath.dataType.subKeyPaths.count > 0 {
+                    values.merge(value.subDescriptions(include: include), uniquingKeysWith: {s0,s1 in return s0+s1 })
                 }
                 
             }
             
         }
-        values.merge(subDescriptions(includeReferences: includeReferences), uniquingKeysWith: { s0, s1 in return s0+s1 })
+        values.merge(subDescriptions(include: include), uniquingKeysWith: { s0, s1 in return s0+s1 })
 
         var v = values[Self.tableName] ?? [[String:String]]()
         v.append(mainValues)
@@ -168,7 +136,7 @@ public extension SQLDataConvertible {
         
         return values
     }
-    fileprivate func subDescriptions (includeReferences: Bool) -> [String: [[String: String]]] {
+    internal func subDescriptions (include: SQLDataIOOptions) -> [String: [[String: String]]] {
 
         var values = [String: [[String: String]]]()
         
@@ -177,7 +145,7 @@ public extension SQLDataConvertible {
             
             var rows = [[String:String]]()
             let mappedKeys = self.dictionary(items: keyPath.mappingKeyPath.items)
-            
+
             for i in array.indices {
                 var row = mappedKeys
                 
@@ -189,30 +157,48 @@ public extension SQLDataConvertible {
                 
                 rows.append(row)
                 
-                if includeReferences, keyPath.referencing {
-                    let desc = array[i].stringDescription(includeReferences: includeReferences)
+                if include.contains(.referencedValues), keyPath.referencing {
+                    let desc = array[i].stringDescription(include: include)
                     values.merge(desc, uniquingKeysWith: {s0, s1 in return s0+s1})
-                } else if type(of: array[i]).subKeyPaths.count > 0 {
-                    values.merge(array[i].subDescriptions(includeReferences: includeReferences), uniquingKeysWith: {s0,s1 in return s0+s1})
+                } else if include.contains(.subValues),  type(of: array[i]).subKeyPaths.count > 0 {
+                    values.merge(array[i].subDescriptions(include: include), uniquingKeysWith: {s0,s1 in return s0+s1})
                 }
             }
             values[keyPath.keyName] = rows
-            
         }
-
+        
+        return values
+    }
+    internal func subDescriptions (keyPath: SQLData.KeyPathArrayColumn, value: SQLDataConvertible, index i: Int, include: SQLDataIOOptions) -> [String: [[String: String]]] {
+        var values = [String: [[String: String]]]()
+        
+        var row = self.dictionary(items: keyPath.mappingKeyPath.items)
+        
+        if let indexingColumn = keyPath.indexingColumn {
+            row[indexingColumn.name] = Int64(i).stringValue(for: Int64.defaultDataType)
+        }
+        
+        row.merge(value.dictionary(items: keyPath.accessedItems), uniquingKeysWith: {s0, s1 in return s0})
+        
+        if include.contains(.referencedValues), keyPath.referencing {
+            let desc = value.stringDescription(include: include)
+            values.merge(desc, uniquingKeysWith: {s0, s1 in return s0+s1})
+        } else if include.contains(.subValues), type(of: value).subKeyPaths.count > 0 {
+            values.merge(value.subDescriptions(include: include), uniquingKeysWith: {s0,s1 in return s0+s1})
+        }
+        values[keyPath.keyName] = [row]
         return values
     }
     
     func dictionary (items: [SQLData.KeyPathItemColumn]) -> [String:String] {
         var dict = [String:String]()
         for item in items {
-            let dataType = item.path.first!.1
-            if let value = dataType.obtainValue(from: item.path.suffix(from: 0), obj: self) {
+            
+            if let value = self.obtainValue(from: item.path.suffix(from: 0)) {
                 dict[item.column.name] = value.stringValue(for: item.column.dataType)
             } else {
                 dict[item.column.name] = "NULL"
             }
-            
         }
         return dict
     }
@@ -227,6 +213,10 @@ public extension SQLDataConvertible {
             return nil
         }
         return value
+    }
+    
+    internal func obtainValue (from path: ArraySlice<(AnyKeyPath, SQLDataConvertible.Type)>) -> SQLItemConvertible? {
+        return path.first!.1.obtainValue(from: path, obj: self)
     }
     
     internal static func obtainValue<T: SQLDataConvertible> (from path: ArraySlice<(AnyKeyPath, SQLDataConvertible.Type)>, obj: T) -> SQLItemConvertible? {
@@ -248,27 +238,4 @@ public extension SQLDataConvertible {
         return nil
     }
     
-}
-extension AnyKeyPath {
-    
-    static func valueUnwrappedType () -> SQLDataConvertible.Type? {
-        let nextType: SQLDataConvertible.Type
-        if let tp = Self.valueType as? SQLDataConvertible.Type {
-            nextType = tp
-        } else if let tp = Self.valueType as? Optional<SQLDataConvertible>.Type {
-            print("hello")
-            nextType = tp.wrappedType() as! SQLDataConvertible.Type
-        } else {
-            return nil
-        }
-        return nextType
-    }
-    
-}
-
-extension Optional {
-    static func wrappedType() -> Wrapped.Type {
-        return Wrapped.self
-        
-    }
 }

@@ -1,110 +1,87 @@
 import XCTest
+import Promises
 @testable import SQLData
 @testable import SQLiteDB
 
 final class SQLiteDBTests: XCTestCase {
 
-    let url = URL(fileURLWithPath: "/Volumes/PandaPartition/sqldatatest.db")
+    let db = SQLiteDB(url: URL(fileURLWithPath: "/Volumes/PandaPartition/sqldatatest.db") )
     
-    func openDB (completion: @escaping (SQLConnectable) -> Void ) {
-        let db = SQLiteDB(url: url)
-        db.open { (error) in
-            if let error = error {
-                print("error: \(error)")
-                return
-            }
-            completion(db)
-        }
+    func openDB () -> Promise<Void> {
+        return db.open().catch(on: db.defaultDispatchQueue, {  XCTFail("Error in opening DB: \($0)") } )
     }
     
-    func initStructures (completion: @escaping (SQLConnectable) -> Void ) {
-        openDB { (db) in
-            Student.initializeStructure(on: db) { (error) in
-                XCTAssertNil(error, "error in structure init: \(error!)")
-                print("structure init success")
-                completion(db)
-            }
-        }
+    func initStructures () -> Promise<Void> {
+        let f = openDB()
+            .then(on: db.defaultDispatchQueue, { Student.initializeStructure(on: self.db) })
+            .then(on: db.defaultDispatchQueue, { print("structure init success") })
+            .catch(on: db.defaultDispatchQueue, {  XCTFail("Error in init structures: \($0)") } )
+        return f
     }
-    func testInsert () {
-        let group = DispatchGroup()
-        group.enter()
-        initStructures { db in
-            let student = Student()
-            student.fullName = "Jeff Singh"
-            student.grades = [ .A, .B ]
-            student.bestFriend = Student()
-            student.bestFriend!.id = 2
-            student.bestFriend!.grades = [.C, .B]
-            
-            student.insert(on: db, includeReferences: true) { (error) in
-                XCTAssertNil(error, "error in inserting data: \(error!)")
-                print("data inserted")
-                group.leave()
-            }
+    func testInsert () throws {
 
-        }
-        group.wait()
-    }
-    func testSelect () {
-        
-        openDB { (db) in
-            Student.select(where: "", on: db, row: { item in
-                print("\(item.id), \(item.fullName)")
-            }) { error in
-                XCTAssertNil(error, "error in selecting data: \(error!)")
-            }
+        let p =
+            initStructures()
+            .then(on: db.defaultDispatchQueue) { _ -> Promise<Void> in
+                let student = Student()
+                student.fullName = "Jeff da first"
+                student.bestFriend = Student()
+                student.bestFriend?.id = 2
+                student.bestFriend?.fullName = "P.P. Poo"
+                student.grades = [ .A, .Aminus, .C ]
             
-        }
-        
-    }
-    func testSelectColumn () {
-        
-        openDB { (db) in
-            Student.select(\Student.id, where: "", on: db, row: { id in
-                print("\(id)")
-            }) { error in
-                XCTAssertNil(error, "error in selecting data: \(error!)")
+                return student.insert(on: self.db, include: .all)
             }
-            
-        }
+            .then(on: db.defaultDispatchQueue) { print("insert success") }
         
+        try await(p)
     }
-    func testInheritanceInsertAndSelect () {
+    func testUpdate () throws {
+        let p = openDB()
+        .then(on: db.defaultDispatchQueue) {
+            Student().update(\Student.fullName, on: self.db)
+        }
+        .then(on: db.defaultDispatchQueue) { print("update success") }
         
-        openDB(completion: { db in
-            Person.initializeStructure(on: db) { (error) in
-                XCTAssertNil(error, "error in init structure: \(error!)")
+        try await(p)
+    }
+    func testSelect () throws {
+        
+        let p = openDB()
+            .then(on: db.defaultDispatchQueue) { Student.select(where: "", on: self.db, include: .all) }
+        
+        let table = try await(p)
+        print(table)
+    }
+    func testSelectColumn () throws {
+        let p = openDB()
+            .then(on: db.defaultDispatchQueue) { _ in Student.select(\Student.id, where: "", on: self.db, row: { print($0) }, include: .all) }
+        
+        try await(p)
+    }
+    func testInheritanceInsertAndSelect () throws {
+        let p =
+            openDB()
+            .then(on: db.defaultDispatchQueue) { Person.initializeStructure(on: self.db) }
+            .then(on: db.defaultDispatchQueue) { PersonWithHouse.initializeStructure(on: self.db) }
+            .then(on: db.defaultDispatchQueue) { _ -> Promise<Void> in
                 
-                PersonWithHouse.initializeStructure(on: db) { (error) in
-                    XCTAssertNil(error, "error in init structure: \(error!)")
-                    
-                    print("structure init success")
-                    
-                    
-                    print(PersonWithHouse.structureDescription().map({$0.query}))
-                    print(PersonWithHouse.primaryKeyPath!.flags)
-                    
-                    let p = PersonWithHouse()
-                    p.id = 20
-                    p.name = "Jeff"
-                    p.houseNumber = 40
-
-                    p.insert(on: db, includeReferences: true) { error in
-                        XCTAssertNil(error, "error in insert: \(error!)")
-                        
-                        PersonWithHouse.select(where: "", on: db, row: { (person) in
-                            
-                        }) { error in
-                            XCTAssertNil(error, "error in insert: \(error!)")
-                        }
-                    }
-                }
+                let p = PersonWithHouse()
+                p.id = 20
+                p.name = "Jeff"
+                p.houseNumber = 40
+                
+                return p.insert(on: self.db, include: .all)
             }
-        })
-        usleep(1000*1000)
+            .then(on: db.defaultDispatchQueue) { PersonWithHouse.select(where: "", on: self.db, include: .all) }
+        let table = try await(p)
+        
+        XCTAssertTrue(table.count > 0)
+        XCTAssertEqual(table[0].id, 20)
+        XCTAssertEqual(table[0].name, "Jeff")
+        XCTAssertEqual(table[0].houseNumber, 40)
     }
-    func testManyInsertAndSelect () {
+    func testManyInsertAndSelect () throws {
         let range = 0..<1000
         var data = [Student]()
         for i in stride(from: range.lowerBound, to: range.upperBound, by: 2) {
@@ -121,35 +98,18 @@ final class SQLiteDBTests: XCTestCase {
             data.append(student)
         }
         
-        initStructures { (db) in
-            
-            let group = DispatchGroup()
-            
-            for student in data {
-                group.enter()
-                student.insert(on: db, includeReferences: true) { (error) in
-                    XCTAssertNil(error, "error in inserting data: \(error!)")
-                    group.leave()
-                }
-            }
-            
-            group.notify(queue: db.defaultDispatchQueue) {
-                print("multiple insert success")
-                var i = 0
-                Student.select(where: "id % 2 == 0 ORDER BY id", on: db, row: { item in
-                    XCTAssertEqual(item, data[i])
+        var i = 0
+        let p =
+            initStructures()
+            .then (on: db.defaultDispatchQueue) { Student.insert(data, on: self.db, include: .all) }
+            .then (on: db.defaultDispatchQueue) { _ in
+                return Student.select(where: "id % 2 == 0 ORDER BY id", on: self.db, row: {
+                    XCTAssertEqual($0, data[i])
                     i += 1
-                }) { error in
-                    XCTAssertNil(error, "error in selecting data: \(error!)")
-                    print("multiple select success")
-                }
-
+                }, include: .all)
             }
-            
-            
-        }
         
-        usleep(5000 * 1000)
+        try await(p)
     }
 
   /*  static var allTests = [

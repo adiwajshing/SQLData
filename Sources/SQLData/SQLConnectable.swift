@@ -6,43 +6,37 @@
 //
 
 import Foundation
+import Promises
 
 public protocol SQLConnectable {
-    
-    var isConcurrencyCapable: Bool { get  }
     
     ///The dispatch queue on which async operations will be run
     var defaultDispatchQueue: DispatchQueue { get }
     
     ///Open a connection to the database asyncronously
-    func open (_ completion: @escaping (Error?) -> Void )
+    func open () -> Promise<Void>
     func close ()
     
-    func query (_ q: String, row: (([String?]) -> Void)?, completion: @escaping (Error?) -> Void)
+    func query (_ q: String, row: (([String?]) -> Void)?) -> Promise<Void>
 }
 public extension SQLConnectable {
     
-    func query (_ q: String, table: @escaping ([[String?]], Error?) -> Void) {
+    func query (table q: String) -> Promise<[[String?]]> {
         var rows = [[String?]]()
-        query(q, row: { rows.append($0) }, completion: { error in table(rows, error) })
+        return query(q) { row in rows.append(row) }.then (on: defaultDispatchQueue) { rows }
     }
-    
-    func query (unorderedQueries queries: [String], completion: @escaping (Error?) -> Void) {
+    func query (queries: [String]) -> Promise<Void> {
 
-        var error: Error?
-        let group = DispatchGroup()
-        
-        DispatchQueue.concurrentPerform(iterations: queries.count) { i in
-            group.enter()
-            self.query(queries[i], row: nil) { e in
-                if let e = e, error == nil {
-                    error = e
-                }
-                group.leave()
-            }
+        var promise = Promise<Void>(())
+        for i in queries.indices {
+            promise = promise.then(on: defaultDispatchQueue, { self.query(queries[i], row: nil) })
         }
-        
-        group.notify(queue: self.defaultDispatchQueue) { completion(error) }
+       // promise.fulfill(())
+        return promise
     }
     
+}
+public func makeTable <T> (q: String, _ rowFunction: (String, @escaping (T) -> Void) -> Promise<Void> ) -> Promise<[T]> {
+    var rows = [T]()
+    return rowFunction(q, { rows.append($0) }).then({ rows })
 }

@@ -8,7 +8,7 @@
 import Foundation
 import SQLData
 
-class Student: SQLDataConvertible {
+class Student: SQLDataConvertible, Codable {
     var id: UInt32 = 0
     var fullName: String = ""
     
@@ -39,8 +39,7 @@ extension Student: Equatable {
         return lhs.id == rhs.id && rhs.fullName == lhs.fullName && lhs.bestFriend == rhs.bestFriend && lhs.grades == rhs.grades
     }
 }
-public enum Grade: Int32, RawRepresentable, SQLItemConvertible {
-    
+public enum Grade: Int32, SQLEnumConvertible, Codable {
     case A = 0
     case Aminus = 1
     case B = 2
@@ -48,21 +47,4 @@ public enum Grade: Int32, RawRepresentable, SQLItemConvertible {
     case C = 4
     case D = 5
     case F = 6
-    
-    public static var defaultDataType: SQLData.DataType {
-        return RawValue.defaultDataType
-    }
-    public init() {
-        self.init(rawValue: 0)!
-    }
-    public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
-        if let value = RawValue.init(sqlValue: sqlValue, type: type, flags: flags) {
-            self.init(rawValue: value)
-            return
-        }
-        return nil
-    }
-    public func stringValue(for dataType: SQLData.DataType) -> String {
-        return rawValue.stringValue(for: dataType)
-    }
 }

@@ -26,10 +26,10 @@ public extension SQLData {
         }
         
         func with (flags: FieldFlag) -> Column {
-            return Column(name: name, dataType: dataType, flags: flags)
+            Column(name: name, dataType: dataType, flags: flags)
         }
         func with (name: String) -> Column {
-            return Column(name: name, dataType: dataType, flags: flags)
+            Column(name: name, dataType: dataType, flags: flags)
         }
         
     }

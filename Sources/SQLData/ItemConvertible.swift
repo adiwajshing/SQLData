@@ -19,29 +19,57 @@ public protocol SQLItemConvertible: SQLDataConvertible {
 public extension SQLItemConvertible {
     
     static var primaryKeyPath: SQLData.KeyPathDataColumn? { return nil }
-    static var mainKeyPaths: [SQLData.KeyPathDataColumn] {
-        return [ SQLData.KeyPathDataColumn(item: \Self.self, name: "value", flags: []) ]
-    }
+    static var mainKeyPaths: [SQLData.KeyPathDataColumn] { return [ SQLData.KeyPathDataColumn(item: \Self.self, name: "value", flags: []) ] }
     static var subKeyPaths: [SQLData.KeyPathArrayColumn] { return [] }
     
-    internal static func write<K: SQLDataConvertible>(keyPath: AnyKeyPath, object: inout K, stringValue: String?, column: SQLData.Column) {
-        let value = Self.init(sqlValue: stringValue!, type: column.dataType, flags: column.flags)
+    internal static func write<K: SQLDataConvertible>(keyPath: AnyKeyPath, object: inout K, stringValue: String?, column: SQLData.Column) -> Bool {
+        
         if let path = keyPath as? WritableKeyPath<K, Self> {
-            object[keyPath: path] = value!
-        } else if let path = keyPath as? WritableKeyPath<K, Self?> {
-            object[keyPath: path] = value
+            if let stringValue = stringValue, let value = Self.init(sqlValue: stringValue, type: column.dataType, flags: column.flags) {
+                object[keyPath: path] = value
+            } else {
+                return false
+            }
+            
+        } else {
+            let path = keyPath as! WritableKeyPath<K, Self?>
+            if let stringValue = stringValue {
+                object[keyPath: path] = Self.init(sqlValue: stringValue, type: column.dataType, flags: column.flags)!
+            } else {
+                object[keyPath: path] = nil
+            }
         }
+        return true
     }
-    internal static func write<K: SQLDataConvertible>(keyPath: AnyKeyPath, objectFrom: K, objectTo: inout K) {
+    /*internal static func write<K: SQLDataConvertible>(keyPath: AnyKeyPath, objectFrom: K, objectTo: inout K) {
         if let path = keyPath as? WritableKeyPath<K, Self> {
             objectTo[keyPath: path] = objectFrom[keyPath: path]
         } else if let path = keyPath as? WritableKeyPath<K, Self?> {
             objectTo[keyPath: path] = objectFrom[keyPath: path]
         }
+    }*/
+}
+
+public protocol SQLEnumConvertible: SQLItemConvertible, RawRepresentable where RawValue: SQLItemConvertible { }
+public extension SQLEnumConvertible {
+    
+    static var defaultDataType: SQLData.DataType {
+        return RawValue.defaultDataType
     }
-    func stringValue (for dataType: SQLData.DataType) -> String {
-        return "'\(self)'"
+    init() {
+        self.init(rawValue: RawValue.init())!
     }
+    init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
+        if let value = RawValue.init(sqlValue: sqlValue, type: type, flags: flags) {
+            self.init(rawValue: value)
+        } else {
+            return nil
+        }
+    }
+    func stringValue(for dataType: SQLData.DataType) -> String {
+        return rawValue.stringValue(for: dataType)
+    }
+    
 }
 
 extension String: SQLItemConvertible {    
@@ -52,13 +80,18 @@ extension String: SQLItemConvertible {
         self.init()
         self.append(contentsOf: sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String {
+        let str = self.replacingOccurrences(of: "'''", with: "'").replacingOccurrences(of: "''", with: "'").replacingOccurrences(of: "'", with: "''")
+        return "'\(str)'"
+    }
 }
 extension Date: SQLItemConvertible {
     
-    static let sqlDateTimeFormat = "yyyy-MM-dd HH:mm:ss"
-    static let sqlDateFormat = "yyyy-MM-dd"
-    static let sqlTimeFormat = "HH:mm:ss"
-    static let sqlYearFormat = "yyyy"
+    public static let sqlDateTimeFormat = "yyyy-MM-dd HH:mm:ss"
+    public static let sqlDateFormat = "yyyy-MM-dd"
+    public static let sqlTimeFormat = "HH:mm:ss"
+    public static let sqlYearFormat = "yyyy"
     
     static func mySQLFormatter (format: String) -> DateFormatter{
         let dateStringFormatter = DateFormatter()
@@ -86,7 +119,7 @@ extension Date: SQLItemConvertible {
     
     public func stringValue(for dataType: SQLData.DataType) -> String {
         if let format = Date.dateFormat(forDataType: dataType) {
-            return Date.mySQLFormatter(format: format).string(from: self)
+            return "'" + Date.mySQLFormatter(format: format).string(from: self) + "'"
         }
         return "NULL"
     }
@@ -114,9 +147,7 @@ extension Data: SQLItemConvertible {
         self.init( sqlValue.utf8 )
     }
     
-    public func stringValue(for dataType: SQLData.DataType) -> String {
-        return self.base64EncodedString()
-    }
+    public func stringValue(for dataType: SQLData.DataType) -> String { return self.base64EncodedString() }
 }
 extension UInt64: SQLItemConvertible {
     
@@ -125,6 +156,7 @@ extension UInt64: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension UInt32: SQLItemConvertible {
     
@@ -133,6 +165,8 @@ extension UInt32: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension UInt16: SQLItemConvertible {
     
@@ -141,6 +175,8 @@ extension UInt16: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension UInt8: SQLItemConvertible {
     
@@ -149,6 +185,18 @@ extension UInt8: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
+}
+extension UInt: SQLItemConvertible {
+    
+    public static var defaultDataType: SQLData.DataType { return .long }
+    
+    public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
+        self.init(sqlValue)
+    }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Int64: SQLItemConvertible {
     
@@ -157,6 +205,8 @@ extension Int64: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Int: SQLItemConvertible {
     
@@ -165,6 +215,8 @@ extension Int: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Int32: SQLItemConvertible {
     
@@ -173,6 +225,8 @@ extension Int32: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Int16: SQLItemConvertible {
     
@@ -181,6 +235,8 @@ extension Int16: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Int8: SQLItemConvertible {
     
@@ -189,6 +245,8 @@ extension Int8: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Double: SQLItemConvertible {
     
@@ -197,6 +255,8 @@ extension Double: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
 extension Float32: SQLItemConvertible {
     
@@ -205,4 +265,17 @@ extension Float32: SQLItemConvertible {
     public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
         self.init(sqlValue)
     }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return "'\(self)'" }
 }
+extension Bool: SQLItemConvertible {
+    
+    public static var defaultDataType: SQLData.DataType { return .tinyInt }
+    
+    public init?(sqlValue: String, type: SQLData.DataType, flags: SQLData.FieldFlag) {
+        self.init(sqlValue == "1" || sqlValue.lowercased() == "true")
+    }
+    
+    public func stringValue (for dataType: SQLData.DataType) -> String { return self ? "1" : "0" }
+}
+

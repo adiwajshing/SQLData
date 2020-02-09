@@ -56,7 +56,7 @@ public extension SQLData {
             if let dataType = dataType {
                 self.items = [ KeyPathItemColumn(keyPath: keyPath, column: SQLData.Column(name: name, dataType: dataType, flags: flags)) ]
             } else {
-                self.items = [ KeyPathItemColumn(keyPath: keyPath, column: Column(name: name, fromType: V.self, flags: flags)) ]
+                self.items = [ KeyPathItemColumn(keyPath: keyPath, column: Column(name: name, fromType: V?.self, flags: flags)) ]
             }
             
             self.referencing = false
@@ -97,25 +97,28 @@ public extension SQLData {
             self.referencing = referencing
             
             
-            let dataKeyPaths: [[SQLData.KeyPathItemColumn]]
+            let dataKeyPaths: [SQLData.KeyPathItemColumn]
             if referencing {
                 if let primaryKey = V.primaryKeyPath {
-                    dataKeyPaths = [primaryKey.items]
+                    dataKeyPaths = primaryKey.items
                 } else {
                     throw Error.primaryKeyAbsent
                 }
             } else {
-                dataKeyPaths = V.mainKeyPaths.map({$0.items})
+                var pKey = [SQLData.KeyPathItemColumn]()
+                if let primary = V.primaryKeyPath {
+                    pKey = primary.items
+                }
+                dataKeyPaths = pKey + V.mainKeyPaths.flatMap {$0.items}
             }
             
-            self.items = dataKeyPaths.flatMap({ kpItems in
-                return kpItems.map({ item -> KeyPathItemColumn in
-                    if let keyPath = keyPathNonOp {
-                        return KeyPathItemColumn(prefixing: keyPath, prefixingName: "\(name)_", flags: item.column.flags, toItemColumn: item)
-                    } else {
-                        return KeyPathItemColumn(prefixing: keyPathOp!, prefixingName: "\(name)_", flags: item.column.flags.subtracting(.notNull), toItemColumn: item)
-                    }
-                })
+            self.items = dataKeyPaths.map({ item -> KeyPathItemColumn in
+                if let keyPath = keyPathNonOp {
+                    return KeyPathItemColumn(prefixing: keyPath, prefixingName: "\(name)_", flags: item.column.flags, toItemColumn: item)
+                } else {
+                    return KeyPathItemColumn(prefixing: keyPathOp!, prefixingName: "\(name)_", flags: item.column.flags.subtracting(.notNull), toItemColumn: item)
+                    
+                }
             })
             
         }
@@ -123,7 +126,7 @@ public extension SQLData {
             self.keyPath = keyPath.keyPath
             self.dataType = keyPath.dataType
             self.flags = keyPath.flags.subtracting(.primaryKey)
-            self.items = keyPath.items.map({ KeyPathItemColumn(prefixingName: prefix, toItemColumn: $0) })
+            self.items = keyPath.items.map { KeyPathItemColumn(prefixingName: prefix, toItemColumn: $0) }
             self.referencing = keyPath.referencing
         }
         
@@ -135,7 +138,7 @@ public extension SQLData {
         }
         func uniquelyIndexedColumns () -> [Column]? {
             if flags.contains(.primaryKey) {
-                if items.count == 1, items.first!.column.flags.contains(.primaryKey) {
+                if items.filter ({ $0.column.flags.contains(.primaryKey) }).count == 1 {
                     return nil
                 } else {
                     return items.map({$0.column})
