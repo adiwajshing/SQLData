@@ -26,7 +26,7 @@ public extension SQLDataConvertible {
             matchClauses = Self.mainKeyPaths.flatMap({ $0.items.map{ "\(tableName).'\($0.column.name)'=\(obtainValue(from: $0.path.suffix(from: 0))?.stringValue(for: $0.column.dataType) ?? "NULL")" } })
         }
         
-        return connectable.query("DELETE FROM \(tableName) WHERE \(matchClauses.joined(separator: ", "))", row: nil)
+        return connectable.query("DELETE FROM \(tableName) WHERE \(matchClauses.joined(separator: " AND "))", row: nil)
         
     }
     func delete <T: SQLDataConvertible> (indexes: [Int], on connectable: SQLConnectable, ofSubKeyPath keyPath: WritableKeyPath<Self, [T]>) -> Promise<Void> {

@@ -93,7 +93,7 @@ extension Date: SQLItemConvertible {
     public static let sqlTimeFormat = "HH:mm:ss"
     public static let sqlYearFormat = "yyyy"
     
-    static func mySQLFormatter (format: String) -> DateFormatter{
+    static func mySQLFormatter (format: String) -> DateFormatter {
         let dateStringFormatter = DateFormatter()
         dateStringFormatter.dateFormat = format
         dateStringFormatter.locale = Locale(identifier: "en_US_POSIX")
